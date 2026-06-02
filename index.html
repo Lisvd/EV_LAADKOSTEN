@@ -41,6 +41,10 @@ button.danger { background:#d64545; }
 .delete-link { color:#d64545; font-size:.85rem; font-weight:750; cursor:pointer; margin-top:6px; display:inline-block; }
 .small { font-size:.84rem; color:#627084; line-height:1.45; }
 .debug { font-size:.8rem; color:#627084; margin-top:8px; display:none; }
+
+.notice { background:#fff7e6; border:1px solid #ffd98a; color:#664700; }
+button.success { background:#168a45; }
+
 </style>
 </head>
 <body>
@@ -53,6 +57,14 @@ button.danger { background:#d64545; }
     </div>
   </div>
   <div class="subtitle">iPhone-versie met vaste thuis-tarieven en handmatige herberekening.</div>
+
+  
+  <div id="monthCloseNotice" class="card notice hidden" style="box-shadow:none; margin:14px 0 0; padding:14px;">
+    <strong>Maandafsluiting beschikbaar</strong>
+    <div class="small" id="monthCloseText" style="margin-top:6px;">De vorige maand kan worden geëxporteerd.</div>
+    <button class="success" id="monthCloseBtn" type="button">Download vorige maand als CSV</button>
+    <button class="secondary" id="monthCloseSkipBtn" type="button">Niet meer tonen voor deze maand</button>
+  </div>
 
   <label for="monthFilter">Maand</label>
   <input id="monthFilter" type="month">
@@ -248,6 +260,7 @@ button.danger { background:#d64545; }
     el("manualCost").value = "";
     updatePreview();
     render();
+    checkMonthClose();
   }
 
   window.deleteSession = function(id) {
@@ -326,6 +339,80 @@ button.danger { background:#d64545; }
     if (el(id)) el(id).addEventListener(eventName, fn, false);
   }
 
+
+  var EXPORT_KEY = "mijn_laadkosten_last_exported_month";
+
+  function previousMonthIso(month) {
+    var parts = month.split("-");
+    var y = parseInt(parts[0], 10);
+    var m = parseInt(parts[1], 10) - 1;
+    if (m === 0) { y -= 1; m = 12; }
+    return y + "-" + ("0" + m).slice(-2);
+  }
+
+  function itemsForMonthExport(month) {
+    return load().filter(function(x) { return x.month === month; }).sort(function(a,b) { return a.date.localeCompare(b.date); });
+  }
+
+  function csvEscapeMonth(v) {
+    return '"' + String(v == null ? "" : v).replace(/"/g,'""') + '"';
+  }
+
+  function makeCsvForMonth(month) {
+    var rows = [["datum","maand","type","kwh","kosten","prijs_per_kwh","zon_percentage","net_percentage","aanbieder_locatie","detail"]];
+    itemsForMonthExport(month).forEach(function(x) {
+      rows.push([x.date,x.month,x.type,x.kwh,Number(x.cost).toFixed(2),Number(x.pricePerKwh).toFixed(4),x.solarShare || "",x.gridShare || "",x.provider,x.detail]);
+    });
+    return rows.map(function(row) { return row.map(csvEscapeMonth).join(";"); }).join("\n");
+  }
+
+  function downloadCsvForMonth(month, markExported) {
+    var items = itemsForMonthExport(month);
+    if (!items.length) {
+      alert("Geen sessies om te exporteren voor " + month + ".");
+      return;
+    }
+    var csv = makeCsvForMonth(month);
+    var blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "laadkosten_" + month + ".csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    if (markExported) {
+      localStorage.setItem(EXPORT_KEY, month);
+      checkMonthClose();
+    }
+  }
+
+  function checkMonthClose() {
+    var current = monthIso();
+    var previous = previousMonthIso(current);
+    var lastExported = localStorage.getItem(EXPORT_KEY) || "";
+    var previousItems = itemsForMonthExport(previous);
+    var box = el("monthCloseNotice");
+
+    if (!box) return;
+
+    if (previousItems.length > 0 && lastExported !== previous) {
+      el("monthCloseText").textContent =
+        "Er staan " + previousItems.length + " laadsessie(s) klaar voor " + previous +
+        ". Download deze maand als CSV en sla hem daarna eventueel op in iCloud Drive of Google Drive.";
+      el("monthCloseBtn").onclick = function() { downloadCsvForMonth(previous, true); };
+      el("monthCloseSkipBtn").onclick = function() {
+        localStorage.setItem(EXPORT_KEY, previous);
+        checkMonthClose();
+      };
+      box.classList.remove("hidden");
+    } else {
+      box.classList.add("hidden");
+    }
+  }
+
   function init() {
     el("chargeDate").value = todayIso();
     el("monthFilter").value = monthIso();
@@ -350,6 +437,7 @@ button.danger { background:#d64545; }
     switchType();
     updatePreview();
     render();
+    checkMonthClose();
   }
 
   if (document.readyState === "loading") {
